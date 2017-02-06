@@ -71,7 +71,7 @@ class encodertest:
         else:
             return int(ret[0])
 
-    def enc_readReg(self, address):
+    def enc_read_reg(self, address):
         try:
             ret = self.dev.ctrl_transfer(0xC0, self.ENC_READ_REG, address, 0, 2)
         except usb.core.USBError:

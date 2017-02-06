@@ -11,6 +11,7 @@ class angletest:
         self.GET_ANGLE = 4
         self.GET_MAGNITUDE = 5
         self.GET_ENC = 6
+        self.GET_CURRENT = 7
         self.dev = usb.core.find(idVendor = 0x6666, idProduct = 0x0003)
         if self.dev is None:
             raise ValueError('no USB device found matching idVendor = 0x6666 and idProduct = 0x0003')
@@ -72,3 +73,12 @@ class angletest:
             print "Could not send GET_ENC vendor request."
         else:
             return ret
+
+    def get_current(self):
+        try:
+            ret = self.dev.ctrl_transfer(0xC0, self.GET_CURRENT, 0, 0, 1)
+        except usb.core.USBError:
+            print "Could not send GET_CURRENT vendor request."
+        else:
+            return ret
+

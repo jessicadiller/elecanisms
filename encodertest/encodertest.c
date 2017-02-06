@@ -26,8 +26,8 @@ WORD enc_readReg(WORD address) {
     cmd.w |= parity(cmd.w)<<15; //calculate even parity for
 
     pin_clear(ENC_NCS);
-    spi_transfer(&spi1, cmd.b[1]);
-    spi_transfer(&spi1, cmd.b[0]);
+    spi_transfer(&spi1, address.b[1]);
+    spi_transfer(&spi1, address.b[0]);
     pin_set(ENC_NCS);
 
     pin_clear(ENC_NCS);
@@ -65,7 +65,7 @@ void VendorRequests(void) {
             BD[EP0IN].status = 0xC8;         // send packet as DATA1, set UOWN bit
             break;
         case ENC_READ_REG:
-            result = enc_readReg(USB_setup.wValue);
+            result = enc_readReg((WORD)USB_setup.wValue.w);
             BD[EP0IN].address[0] = result.b[0];
             BD[EP0IN].address[1] = result.b[1];
             BD[EP0IN].bytecount = 2;         // set EP0 IN byte count to 1
