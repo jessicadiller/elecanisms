@@ -10,20 +10,19 @@
 #include "oc.h"
 
 #define TOGGLE_LED1       1   // Vendor request that toggles LED 1 from on/off
-#define TOGGLE_LED2       2
-#define TOGGLE_LED3       3
-#define SET_DUTY_F        4
-#define SET_DUTY_R        5
-#define GET_DUTY_F        6
-#define GET_DUTY_R        7
-#define GET_ANGLE         8
-#define GET_CURRENT       9
+#define SET_DUTY          2
+#define GET_DUTY          3
+#define GET_ANGLE         4
+#define GET_MAGNITUDE     5
+#define GET_ENC           6
+#define GET_CURRENT       7
 
 #define REG_ANG_ADDR      0x3FFF
 #define REG_MAG_ADDR      0x3FFE
 
 #define SENSOR_MASK       0X3F
 #define ANALOG_MASK       0XC0
+#define KONSTANT          0x4
 
 //uint16_t val1, val2;
 
@@ -60,6 +59,9 @@ void VendorRequests(void) {
     WORD temp;
     WORD angle;
     WORD vout;
+    float realvout;
+    float current;
+    uint8_t torque;
     
     switch (USB_setup.bRequest) {
         case TOGGLE_LED1:
@@ -67,39 +69,15 @@ void VendorRequests(void) {
             BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0
             BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
             break;
-        case TOGGLE_LED2:
-            led_toggle(&led2);
-            BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0
-            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
-            break;
-        case TOGGLE_LED3:
-            led_toggle(&led3);
-            BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0
-            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
-            break;
-        case SET_DUTY_F:
+        case SET_DUTY:
             pin_write(&D[7], (uint16_t)USB_setup.wValue.w);
             pin_write(&D[8], 0x0);
 	    // below needed to finish all vendor requests
             BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0 
             BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
             break;
-        case SET_DUTY_R:
-            pin_write(&D[7], 0x0);
-            pin_write(&D[8], (uint16_t)USB_setup.wValue.w);
-	    // below needed to finish all vendor requests
-            BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0 
-            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
-            break;
-        case GET_DUTY_F:
+        case GET_DUTY:
             temp.w = pin_read(&D[7]);
-            BD[EP0IN].address[0] = temp.b[0];
-            BD[EP0IN].address[1] = temp.b[1];
-            BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
-            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
-            break;
-        case GET_DUTY_R:
-            temp.w = pin_read(&D[8]);
             BD[EP0IN].address[0] = temp.b[0];
             BD[EP0IN].address[1] = temp.b[1];
             BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
@@ -107,7 +85,21 @@ void VendorRequests(void) {
             break;
         case GET_ANGLE:
             angle = enc_read_reg((WORD)REG_ANG_ADDR);
-            angle.b[1] = angle.b[1]&0b00111111;
+            angle.b[0]&SENSOR_MASK;
+            BD[EP0IN].address[0] = angle.b[0];
+            BD[EP0IN].address[1] = angle.b[1];
+            BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
+            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
+            break;
+        case GET_MAGNITUDE:
+            angle = enc_read_reg((WORD)REG_MAG_ADDR);
+            BD[EP0IN].address[0] = angle.b[0];
+            BD[EP0IN].address[1] = angle.b[1];
+            BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
+            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
+            break;
+        case GET_ENC:
+            angle = enc_read_reg(USB_setup.wValue);
             BD[EP0IN].address[0] = angle.b[0];
             BD[EP0IN].address[1] = angle.b[1];
             BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
@@ -115,9 +107,15 @@ void VendorRequests(void) {
             break;
         case GET_CURRENT:
             vout.w = pin_read(CURR_P);
-            BD[EP0IN].address[0] = vout.b[0];
-            BD[EP0IN].address[1] = vout.b[1];
-            BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
+            vout.b[1]&ANALOG_MASK;
+            vout.b[0] = vout.b[0]*(2^8);
+            realvout = vout.b[0]+vout.b[1];
+            realvout = (realvout/(2^16 -1)) *3.3;
+            current = (realvout - 1.6) * 3 / 4 ;
+            torque = (uint8_t) (KONSTANT * current);
+            BD[EP0IN].address[0] = torque;
+            //BD[EP0IN].address[1] = vout.b[1];
+            BD[EP0IN].bytecount = 1;    // set EP0 IN byte count to 2
             BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
             break;
         default:
@@ -157,7 +155,7 @@ int16_t main(void) {
     pin_digitalOut(ANG_NCS);
     pin_set(ANG_NCS);
     
-    spi_open(&spi1, ANG_MISO, ANG_MOSI, ANG_SCK, 2e6, 1);
+    spi_open(&spi1, ANG_MISO, ANG_MOSI, ANG_SCK, 2e6, 1); //WHY ONE
 
     oc_pwm(&oc1, &D[7], NULL, 10e3, 0x8000);
     oc_pwm(&oc2, &D[8], NULL, 10e3, 0x0);

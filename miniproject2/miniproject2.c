@@ -10,29 +10,18 @@
 #include "oc.h"
 
 #define TOGGLE_LED1       1   // Vendor request that toggles LED 1 from on/off
-#define TOGGLE_LED2       2
-#define TOGGLE_LED3       3
-#define SET_DUTY_F        4
-#define SET_DUTY_R        5
-#define GET_DUTY_F        6
-#define GET_DUTY_R        7
-#define GET_ANGLE         8
-#define GET_CURRENT       9
+#define SET_DUTY          2
+#define GET_DUTY          3
+#define GET_ANGLE         4
+#define GET_MAGNITUDE     5
+#define GET_ENC           6
 
 #define REG_ANG_ADDR      0x3FFF
 #define REG_MAG_ADDR      0x3FFE
 
 #define SENSOR_MASK       0X3F
 #define ANALOG_MASK       0XC0
-
-//uint16_t val1, val2;
-
-//void ClassRequests(void) {
-//    switch (USB_setup.bRequest) {
-//        default:
-//            USB_error_flags |= 0x01;                    // set Request Error Flag
-//    }
-//}
+#define KONSTANT          0x4
 
 _PIN *ANG_SCK, *ANG_MISO, *ANG_MOSI;
 _PIN *ANG_NCS;
@@ -51,55 +40,77 @@ WORD enc_read_reg(WORD address) {
     pin_clear(ANG_NCS);
     angle.b[1] = spi_transfer(&spi1, 0);
     angle.b[0] = spi_transfer(&spi1, 0);
+    angle.b[0]=angle.b[0]&SENSOR_MASK;
     pin_set(ANG_NCS);
     return angle;
+}
+
+float calc_torque(){
+    WORD vout;
+    int realvout;
+    int current;
+    int torque;
+
+    vout.w = pin_read(CURR_P); //reads analog pin
+    vout.b[0] = vout.b[1]&ANALOG_MASK; //masks last 6 digits
+    realvout = vout.b[0]+vout.b[1]; //combines bytes into integer
+    realvout = (realvout*3.3)/65535; //normalization
+    current = (realvout - 1.6) * 0.075;
+    torque = KONSTANT * current;
+    return torque;
+}
+
+int pwm_control(int ideal, float real, int duty_cycle){
+  int diff_torque;
+  int new_duty;
+  int constant_p = (1/3);
+  diff_torque = ideal - real;
+  new_duty = duty_cycle + (constant_p * diff_torque);
+  return new_duty;
+
+}
+
+
+
+int wall_control(int position){
+    // input current angle, ouput desired torque (PWM) 
+    float torque = calc_torque(); 
+    int ideal, pwm, threshold; 
+    WORD duty;
+    threshold = get_wall_threshold();
+    duty.w = pin_read(&D[7]); 
+    if (duty.w == 0x0){
+      duty.w = pin_read(&D[8]);
+    }
+    pwm = duty.b[0]+duty.b[1]*256; //combines bytes into integer
+    if (position >= threshold){
+	   ideal = 30; //set to "safe" max torque, 30/ 42.4 
+    } 
+    pwm = pwm_control(ideal, torque, pwm);
+    //pwm = 0x8000; 
+    return pwm;
 }
 
 void VendorRequests(void) {
     WORD32 address;
     WORD temp;
     WORD angle;
-    WORD vout;
-    
+
     switch (USB_setup.bRequest) {
         case TOGGLE_LED1:
             led_toggle(&led1);
             BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0
             BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
             break;
-        case TOGGLE_LED2:
-            led_toggle(&led2);
-            BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0
-            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
-            break;
-        case TOGGLE_LED3:
-            led_toggle(&led3);
-            BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0
-            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
-            break;
-        case SET_DUTY_F:
+        case SET_DUTY:
             pin_write(&D[7], (uint16_t)USB_setup.wValue.w);
             pin_write(&D[8], 0x0);
-	    // below needed to finish all vendor requests
-            BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0 
+      // below needed to finish all vendor requests
+            BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0
             BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
             break;
-        case SET_DUTY_R:
-            pin_write(&D[7], 0x0);
-            pin_write(&D[8], (uint16_t)USB_setup.wValue.w);
-	    // below needed to finish all vendor requests
-            BD[EP0IN].bytecount = 0;    // set EP0 IN byte count to 0 
-            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
-            break;
-        case GET_DUTY_F:
+        case GET_DUTY:
             temp.w = pin_read(&D[7]);
-            BD[EP0IN].address[0] = temp.b[0];
-            BD[EP0IN].address[1] = temp.b[1];
-            BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
-            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
-            break;
-        case GET_DUTY_R:
-            temp.w = pin_read(&D[8]);
             BD[EP0IN].address[0] = temp.b[0];
             BD[EP0IN].address[1] = temp.b[1];
             BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
@@ -107,16 +118,23 @@ void VendorRequests(void) {
             break;
         case GET_ANGLE:
             angle = enc_read_reg((WORD)REG_ANG_ADDR);
-            angle.b[1] = angle.b[1]&0b00111111;
             BD[EP0IN].address[0] = angle.b[0];
             BD[EP0IN].address[1] = angle.b[1];
             BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
             BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
             break;
-        case GET_CURRENT:
-            vout.w = pin_read(CURR_P);
-            BD[EP0IN].address[0] = vout.b[0];
-            BD[EP0IN].address[1] = vout.b[1];
+        case GET_MAGNITUDE:
+            angle = enc_read_reg((WORD)REG_MAG_ADDR);
+            BD[EP0IN].address[0] = angle.b[0];
+            BD[EP0IN].address[1] = angle.b[1];
+            BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
+            BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
+            break;
+        case GET_ENC:
+            angle = enc_read_reg(USB_setup.wValue);
+            angle.b[0]&SENSOR_MASK;
+            BD[EP0IN].address[0] = angle.b[0];
+            BD[EP0IN].address[1] = angle.b[1];
             BD[EP0IN].bytecount = 2;    // set EP0 IN byte count to 2
             BD[EP0IN].status = 0xC8;    // send packet as DATA1, set UOWN bit
             break;
@@ -139,6 +157,7 @@ void VendorRequestsOut(void) {
             USB_error_flags |= 0x01;                    // set Request Error Flag
     }
 }
+/////////////////////////////Main Function////////////////////////////////////
 
 int16_t main(void) {
     init_clock();
@@ -156,18 +175,20 @@ int16_t main(void) {
     pin_analogIn(CURR_P);
     pin_digitalOut(ANG_NCS);
     pin_set(ANG_NCS);
-    
-    spi_open(&spi1, ANG_MISO, ANG_MOSI, ANG_SCK, 2e6, 1);
 
-    oc_pwm(&oc1, &D[7], NULL, 10e3, 0x8000);
+    spi_open(&spi1, ANG_MISO, ANG_MOSI, ANG_SCK, 2e6, 1); //WHY ONE
+
+    oc_pwm(&oc1, &D[7], NULL, 10e3, 0x8000);  // Pin, internal vs external timer, frequency, initial duty cycle
     oc_pwm(&oc2, &D[8], NULL, 10e3, 0x0);
 
-    InitUSB();                              // initialize the USB registers and serial interface engine
+    InitUSB();
+
+                                  // initialize the USB registers and serial interface engine
     while (USB_USWSTAT!=CONFIG_STATE) {     // while the peripheral is not configured...
         ServiceUSB();                       // ...service USB requests
     }
     while (1) {
-        ServiceUSB();                       // service any pending USB requests
+      ServiceUSB();
     }
 }
 
