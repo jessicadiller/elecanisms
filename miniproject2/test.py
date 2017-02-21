@@ -1,14 +1,15 @@
 import time
-import angletest
+import miniproject2 as m
 
-ang = angletest.angletest()
-
-ang.toggle_led1()
+mt = m.jtest()
 
 #while(True):
-angleBytes = ang.get_angle() #gets angle measurement in bytes
-angle = int(angleBytes[0])+int(angleBytes[1])*256 #formats to integer
-print 'Bin: {0:016b} Dec: {0:0d}'.format(angle) 
+angleBytes = mt.get_angle() #gets angle measurement in bytes
+print angleBytes
+first = int(angleBytes[0])+int(angleBytes[1])*256 #formats to integer
+second = int(angleBytes[2])+int(angleBytes[3])*256 #formats to integer
+print "first: ",'Bin: {0:016b} Dec: {0:0d}'.format(first) 
+print "second: ",'Bin: {0:016b} Dec: {0:0d}'.format(second) 
 #print in angle code in binary and hex
 #the decimal section is a fractional number between 0 and 1 
 #    time.sleep(.01)
