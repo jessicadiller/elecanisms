@@ -3,6 +3,11 @@ import miniproject2 as mp
 
 at = mp.jtest()
 
+def set_period():
+    #call vendor request?
+    timer = 0.001 #in seconds
+    return timer;
+
 def angle_get():
     sum_angle = 0; 
     for i in range(0,20):
@@ -20,18 +25,27 @@ def angle_get():
     return position;
 
 def speed_get(): 
-    a1 = angle_get()
-    t1 = time.clock()
-    a2 = angle_get()
-    t2 = time.clock()
-    print a2 - a1
-    speed = (a2 - a1)/(t2 - t1)
-    angle = a2
-    return [speed, angle]
-
+    a0 = at.get_angle_speed()
+    #print "a0: ",a0
+    #print "{0:b}".format(a0[0])
+    #print "{0:b}".format(a0[1])
+    #print "{0:b}".format(a0[2])
+    #print "{0:b}".format(a0[3])
+    int_a1 = ((int(a0[0]) + int(a0[1])*256) - 16167)/46.59
+    #print "angle 1 integer: ",int_a1
+    int_a2 = ((int(a0[2]) + int(a0[3])*256) - 16167)/46.59
+    #print "angle 2 integer: ",int_a2
+    dif_a = int_a2 - int_a1
+    #print "difference btwn angles: ",dif_a
+    t = set_period() #hard code period in earlier function
+    speed = dif_a / t #could just put function call here, just wanted to confirm it would work first
+    print "speed: ",speed
+    angle = (int_a1 + int_a2)/2
+    print "average angle: ",angle
+    return [speed, angle];
 
 def torque_get():
-    at.toggle_led1()
+    #at.toggle_led1()
     #GET CURRENT
     analog = at.get_current()
     #print "get_current output: ",analog
@@ -46,7 +60,7 @@ def torque_get():
     current = (normalized - 1.6) / 0.75
     #print "current calculation: ",print current
     real = 4 * current
-    print "real torque:, ",real
+    print "real torque: ",real
     return real;
 
 def duty_frac_converter(num):
@@ -76,103 +90,123 @@ def pwm_control(realT, idealT, change):
     at.toggle_led2()
 
     diffT = idealT - realT
-
-    print "diff:",diffT
+    #print "diff:",diffT
     fraction = diffT/30
-    print "fraction: ",fraction
-
+    #print "fraction: ",fraction
     dutyf = at.get_duty_f()
-    print "dutyf: ",dutyf
+    #print "dutyf: ",dutyf
     dutyr = at.get_duty_r()
-    print "dutyr: ",dutyr
+    #print "dutyr: ",dutyr
     duty = dutyf - dutyr
-    print "total duty: ",duty
-
-    new_duty = duty + abs(duty) * fraction
+    #print "total duty: ",duty
+    if duty > 0:
+        new_duty = duty + (2**16-1)* fraction
+    else:
+        new_duty = duty - (2**16-1) *fraction
     if new_duty > 2**16-1:
         new_duty = 2**16-1
     elif new_duty<-(2**16-1):
-        new_dut = -(2**16-1)
-    #NEGATIVE VALUE FOR PWM JUST GET BIGGER AND BIGGER
+        new_duty = -(2**16-1)
+    #NEGATIVE VALUE FOR PWM JUST GET BIGGER AND BIGGER -changed?
     print "new_duty: ",new_duty
-    print "{0:b}".format(int(new_duty))
+    #print "{0:b}".format(int(new_duty))
     if new_duty > 0:
         at.set_duty_f(new_duty)
-        print "set duty forward"
+        #print "set duty forward"
     elif new_duty <0:
         at.set_duty_r(new_duty *-1)
-
-        print "set duty reverse"
+        #print "set duty reverse"
     else: 
         at.set_duty_f(0)
-        print "set duty 0"
+        #print "set duty 0"
     return;
 
 def wall_control(position):
     # input current angle, ouput desired torque (PWM) 
     torque = torque_get() 
-    threshold_r = -160 
-    threshold_f = -130
+    threshold_r = -15 
+    threshold_f = 15
     if (position <= threshold_r):
-	ideal = 1 #set to "safe" max torque, 30/ 42.4 
+        ideal = 30 #set to "safe" max torque, 30/ 42.4 
         control = True
         print "past threshold r"
         at.set_duty_f(0xF000)
     elif (position >= threshold_f):
-	ideal = -1 #set to "safe" max torque, 30/ 42.4 
+        ideal = -30 #set to "safe" max torque, 30/ 42.4 
         control = True
         print "past threshold f"
         at.set_duty_r(0xF000)
     else: 
         ideal = 0
-        control = False
+        control = True
         print "not past threshold"
         at.set_duty_f(0)
     #print "control:"
     #print control
 
+    # pwm_control(torque, ideal, control);
 
-    #pwm_control(torque, ideal, control);
-
-    #int ideal, pwm, threshold; 
-    # threshold = get_wall_threshold(); // in degrees
-    #duty.w = pin_read(&D[7]); 
-    #if (duty.w == 0x0){
-    #  duty.w = pin_read(&D[8]);
-    #}
-    #pwm = duty.b[0]+duty.b[1]*256; //combines bytes into integer
-     #pin_write(&D[8], 0x0);
-     #pin_write(&D[7], 0x0);
-    #} 
     return;
 
 #spring_control
 def spring_control(position):
     torque = torque_get()
-    print "torque: ",torque
-    ideal = (position +145) * -1.5 #FIGURE OUT ANGLE SYSTEM
+    ideal = (position) * -0.5 #FIGURE OUT ANGLE SYSTEM
     print "ideal: ",ideal
     pwm_control(torque, ideal, 1)
-    print "done"
+    #print "done"
+    return;
+
+#damper_control
+def damper_control(speed, position):
+    torque = torque_get()
+    ideal = speed * -0.25 #FIGURE OUT ANGLE SYSTEM
+    print "ideal: ",ideal
+    pwm_control(torque, ideal, 1)
+    #print "done"
     return;
 
 
-#damper_control
 #texture_control
+def texture_control(position):
+    # 5 deg increment "ratchet"
+    rel = abs(position)%10
+    print rel
+    torque = torque_get()
+    if rel < 5:
+        ideal = 0
+        at.set_duty_r(0x0000)
+        print "setting zero"
+    elif rel > 5: 
+        ideal = 15
+        at.set_duty_f(0xF000)
+        print "bump"
+    else: 
+        ideal = 15
+    # pwm_control(torque, ideal, control)
+    return; 
 
-#call functions
-#t = 1
+
+# call functions
+
 #while t < 1000000000000000000000000:
-
+#[speed, position] = speed_get()
+#position = angle_get()
+#damper_control(speed, position)
 while True:
-    position = angle_get()
-# [speed, position] = speed_get() 
-# print "speed "
-# print speed
-# print "; position "
-# print position
-    wall_control(position)
+    #position = angle_get()
+    #position = position - starting_position
+    #if position > 180:
+    #    position -= 360
+    #elif position < -180:
+    #    position += 360
+    #print('relative position:', position)
+    [speed, position] = speed_get() 
+    damper_control(speed, position)
+    #wall_control(position)
     #spring_control(position)
+
+    #texture_control(position)
 
     #t = t+1
 
